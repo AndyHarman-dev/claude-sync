@@ -12,9 +12,13 @@ it with Bash and relay its output to the user. Never invent status information y
 always call the CLI.
 
 If a SessionStart message earlier in this conversation said "You are sync session
-`<label>` in group `<group>`", pass `--session <label>` on every call below so the CLI
-resolves the right session even if another synced session shares this same working
-directory. If no such identity is known, omit it — the CLI falls back to matching by cwd.
+`<label>` in group `<group>`", **always pass `--session <label>` on every call below** —
+never omit it just because `$PWD` looks right. The CLI's cwd-based fallback matches
+whichever session was last active in that directory, which silently resolves to the
+*wrong* session if another synced session shares this working directory, or breaks
+entirely if this session's working directory changed since it registered (e.g. you
+switched it to a different git worktree or repo path mid-conversation). Only omit
+`--session` if no such identity line was ever shown to you.
 
 ## Subcommands
 
@@ -52,5 +56,8 @@ directory. If no such identity is known, omit it — the CLI falls back to match
 - If `claude-sync status` reports the daemon isn't running, tell the user and suggest
   `claude-sync daemon start` — everything still works in a degraded mode (journaling
   continues, nothing gets summarized until the daemon is back).
-- If the CLI reports "Not part of a sync group here", this session simply isn't synced;
-  say so plainly rather than guessing.
+- If the CLI reports "Not part of a sync group here" even though this session was
+  previously synced (e.g. right after its working directory changed to a different repo
+  or git worktree), the membership record may have been orphaned. Tell the user, then
+  offer to run `/sync join <group>` again with the original group name to re-register —
+  `--session` alone can't fix a membership that no longer exists.
