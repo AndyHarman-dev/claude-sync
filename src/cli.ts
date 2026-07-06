@@ -9,7 +9,7 @@ import { CAPS, clampStr } from "./lib/types";
 import type { Digest, Membership, PendingJoin } from "./lib/types";
 import { daemonStatus, ensureDaemon, stopDaemon, runForeground } from "./daemon/index";
 import { sendControlCommand } from "./daemon/control";
-import { install } from "./install/install";
+import { install, defaultInstallPaths } from "./install/install";
 import { uninstall } from "./install/uninstall";
 
 interface Flags {
@@ -212,10 +212,13 @@ export async function main(argv: string[]): Promise<void> {
       await cmdDaemon(positional);
       break;
     case "install":
-      await install();
+      await install(flags.project === "true" ? defaultInstallPaths({ project: true, cwd: flags.cwd }) : {});
       break;
     case "uninstall":
-      await uninstall({ purge: flags.purge === "true" });
+      await uninstall({
+        ...(flags.project === "true" ? defaultInstallPaths({ project: true, cwd: flags.cwd }) : {}),
+        purge: flags.purge === "true",
+      });
       break;
     default:
       console.log("usage: claude-sync <status|now|push|join|leave|daemon|install|uninstall>");

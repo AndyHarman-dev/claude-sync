@@ -13,14 +13,19 @@ export interface InstallPaths {
   localBinDir: string;
 }
 
-export function defaultInstallPaths(): InstallPaths {
+/** `project: true` scopes settings + skill to `<cwd>/.claude` instead of `~/.claude`, so the
+ * hooks only fire for sessions started inside that project. `hookMainPath` and `localBinDir`
+ * stay machine-global either way — the hook script and the CLI/wrapper binaries are shared
+ * tooling, not something that makes sense to duplicate per project. */
+export function defaultInstallPaths(opts: { project?: boolean; cwd?: string } = {}): InstallPaths {
   const repoRoot = join(import.meta.dir, "..", "..");
+  const claudeDir = opts.project ? join(opts.cwd ?? process.cwd(), ".claude") : join(homedir(), ".claude");
   return {
     repoRoot,
-    settingsPath: join(homedir(), ".claude", "settings.json"),
+    settingsPath: join(claudeDir, "settings.json"),
     hookMainPath: join(repoRoot, "src", "hooks", "main.ts"),
     skillSrcDir: join(repoRoot, "assets", "skills", "sync"),
-    skillDestDir: join(homedir(), ".claude", "skills", "sync"),
+    skillDestDir: join(claudeDir, "skills", "sync"),
     localBinDir: join(homedir(), ".local", "bin"),
   };
 }

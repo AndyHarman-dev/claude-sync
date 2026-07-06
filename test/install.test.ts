@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { mkdtemp, rm, readFile, lstat, readlink, mkdir, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { install, defaultInstallPaths } from "../src/install/install";
 import { uninstall } from "../src/install/uninstall";
@@ -89,6 +89,45 @@ describe("install", () => {
     await mkdir(sandboxPaths.skillDestDir, { recursive: true });
     await writeFile(join(sandboxPaths.skillDestDir, "SKILL.md"), "not ours");
     await expect(install(sandboxPaths)).rejects.toThrow(/not a symlink/);
+  });
+
+  test("project-scoped install (via defaultInstallPaths project paths) writes into <cwd>/.claude, not the home dir", async () => {
+    const projectDir = join(dir, "some-project");
+    await mkdir(projectDir, { recursive: true });
+    const projectPaths: InstallPaths = {
+      ...defaultInstallPaths({ project: true, cwd: projectDir }),
+      repoRoot: REAL_REPO_ROOT,
+      localBinDir: sandboxPaths.localBinDir, // keep bins sandboxed, never touch the real ~/.local/bin
+    };
+
+    await install(projectPaths);
+
+    const settings = JSON.parse(await readFile(join(projectDir, ".claude", "settings.json"), "utf8"));
+    expect(Object.keys(settings.hooks).sort()).toEqual(["PostToolUse", "SessionEnd", "SessionStart", "UserPromptSubmit"]);
+
+    const skillLink = await lstat(join(projectDir, ".claude", "skills", "sync"));
+    expect(skillLink.isSymbolicLink()).toBe(true);
+  });
+});
+
+describe("defaultInstallPaths", () => {
+  test("project: true scopes settings and skill under <cwd>/.claude, keeping bins/hook global", () => {
+    const p = defaultInstallPaths({ project: true, cwd: "/repo/a" });
+    expect(p.settingsPath).toBe(join("/repo/a", ".claude", "settings.json"));
+    expect(p.skillDestDir).toBe(join("/repo/a", ".claude", "skills", "sync"));
+    expect(p.localBinDir).toBe(join(homedir(), ".local", "bin"));
+    expect(p.hookMainPath).toBe(join(REAL_REPO_ROOT, "src", "hooks", "main.ts"));
+  });
+
+  test("project: true without an explicit cwd falls back to process.cwd()", () => {
+    const p = defaultInstallPaths({ project: true });
+    expect(p.settingsPath).toBe(join(process.cwd(), ".claude", "settings.json"));
+  });
+
+  test("without project, settings/skill are scoped under the home directory as before", () => {
+    const p = defaultInstallPaths();
+    expect(p.settingsPath).toBe(join(homedir(), ".claude", "settings.json"));
+    expect(p.skillDestDir).toBe(join(homedir(), ".claude", "skills", "sync"));
   });
 });
 
