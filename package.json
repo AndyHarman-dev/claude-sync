@@ -1,0 +1,19 @@
+{
+  "name": "claude-sync",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "claude-sync": "./bin/claude-sync",
+    "csync": "./bin/csync"
+  },
+  "scripts": {
+    "test": "bun test",
+    "daemon": "bun src/daemon/index.ts --foreground",
+    "install-hooks": "bun src/install/install.ts",
+    "uninstall-hooks": "bun src/install/uninstall.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
