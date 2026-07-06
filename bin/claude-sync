@@ -1,2 +1,7 @@
 #!/usr/bin/env bun
-import "../src/cli.ts";
+import { main } from "../src/cli.ts";
+
+main(process.argv.slice(2)).catch((err) => {
+  console.error(String(err));
+  process.exitCode = 1;
+});
