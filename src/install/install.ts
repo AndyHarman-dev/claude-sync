@@ -76,7 +76,7 @@ export async function install(overrides: Partial<InstallPaths> = {}): Promise<vo
     throw new Error(`Refusing to install: ${p.settingsPath} is not valid JSON (${err}). Fix or remove it, then retry.`);
   }
 
-  const next = mergeHooks(settings, p.hookMainPath);
+  const next = mergeHooks(settings, p.hookMainPath, process.execPath);
   await backupAndWriteSettings(p.settingsPath, next);
 
   await ensureSymlink(p.skillSrcDir, p.skillDestDir);

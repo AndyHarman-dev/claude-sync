@@ -2,11 +2,12 @@ import { describe, test, expect } from "bun:test";
 import { mergeHooks, removeHooks, HOOK_SENTINEL } from "../src/install/settings-merge";
 
 const HOOK_MAIN = "/Users/wiam/VSCodeProjects/claude-sync/src/hooks/main.ts";
+const BUN_PATH = "/Users/wiam/.bun/bin/bun";
 
 describe("mergeHooks", () => {
   test("adds all four events into an empty settings object, preserving other keys", () => {
     const settings = { model: "claude-fable-5", theme: "dark" };
-    const next = mergeHooks(settings, HOOK_MAIN);
+    const next = mergeHooks(settings, HOOK_MAIN, BUN_PATH);
     expect(next.model).toBe("claude-fable-5");
     expect(next.theme).toBe("dark");
     expect(Object.keys(next.hooks!).sort()).toEqual(["PostToolUse", "SessionEnd", "SessionStart", "UserPromptSubmit"]);
@@ -18,8 +19,8 @@ describe("mergeHooks", () => {
   });
 
   test("is idempotent: running twice does not duplicate entries", () => {
-    const once = mergeHooks({}, HOOK_MAIN);
-    const twice = mergeHooks(once, HOOK_MAIN);
+    const once = mergeHooks({}, HOOK_MAIN, BUN_PATH);
+    const twice = mergeHooks(once, HOOK_MAIN, BUN_PATH);
     for (const event of Object.keys(twice.hooks!)) {
       expect(twice.hooks![event]).toHaveLength(1);
     }
@@ -32,15 +33,29 @@ describe("mergeHooks", () => {
         SessionStart: [{ hooks: [{ type: "command", command: "some-other-tool --notify" }] }],
       },
     };
-    const next = mergeHooks(settings, HOOK_MAIN);
+    const next = mergeHooks(settings, HOOK_MAIN, BUN_PATH);
     expect(next.hooks!.SessionStart).toHaveLength(2);
     expect(next.hooks!.SessionStart!.some((e) => e.hooks[0]!.command === "some-other-tool --notify")).toBe(true);
     expect(next.hooks!.SessionStart!.some((e) => e.hooks[0]!.command.includes(HOOK_SENTINEL))).toBe(true);
   });
 
+  test("bakes in the given absolute bun path rather than a bare 'bun' lookup", () => {
+    // Regression: hook commands run through a non-interactive shell that never sources
+    // .zshrc/.bashrc, so a bare "bun" would only resolve if bun happened to already be on
+    // the system default PATH — which it isn't when installed via the official installer
+    // (that only adds ~/.bun/bin to PATH from within .zshrc). Baking in the absolute path
+    // the installer itself is running under sidesteps the whole PATH question.
+    const next = mergeHooks({}, HOOK_MAIN, BUN_PATH);
+    for (const event of Object.keys(next.hooks!)) {
+      const command = next.hooks![event]![0]!.hooks[0]!.command;
+      expect(command).toBe(`${BUN_PATH} ${HOOK_MAIN}`);
+      expect(command.startsWith("bun ")).toBe(false);
+    }
+  });
+
   test("re-installing after a hook path change replaces the old entry, not append", () => {
-    const once = mergeHooks({}, "/old/path/claude-sync/src/hooks/main.ts");
-    const twice = mergeHooks(once, "/new/path/claude-sync/src/hooks/main.ts");
+    const once = mergeHooks({}, "/old/path/claude-sync/src/hooks/main.ts", BUN_PATH);
+    const twice = mergeHooks(once, "/new/path/claude-sync/src/hooks/main.ts", BUN_PATH);
     expect(twice.hooks!.SessionStart).toHaveLength(1);
     expect(twice.hooks!.SessionStart![0]!.hooks[0]!.command).toContain("/new/path/");
   });
@@ -48,7 +63,7 @@ describe("mergeHooks", () => {
 
 describe("removeHooks", () => {
   test("removes our entries and drops the hooks key entirely when nothing else remains", () => {
-    const merged = mergeHooks({ model: "x" }, HOOK_MAIN);
+    const merged = mergeHooks({ model: "x" }, HOOK_MAIN, BUN_PATH);
     const removed = removeHooks(merged);
     expect(removed.hooks).toBeUndefined();
     expect(removed.model).toBe("x");
@@ -60,7 +75,7 @@ describe("removeHooks", () => {
         SessionStart: [{ hooks: [{ type: "command", command: "some-other-tool --notify" }] }],
       },
     };
-    const merged = mergeHooks(settings, HOOK_MAIN);
+    const merged = mergeHooks(settings, HOOK_MAIN, BUN_PATH);
     const removed = removeHooks(merged);
     expect(removed.hooks!.SessionStart).toHaveLength(1);
     expect(removed.hooks!.SessionStart![0]!.hooks[0]!.command).toBe("some-other-tool --notify");
@@ -73,7 +88,7 @@ describe("removeHooks", () => {
 
   test("round-trips: merge then remove restores the original settings shape", () => {
     const original = { model: "claude-fable-5", enabledPlugins: { foo: true } };
-    const restored = removeHooks(mergeHooks(original, HOOK_MAIN));
+    const restored = removeHooks(mergeHooks(original, HOOK_MAIN, BUN_PATH));
     expect(restored).toEqual(original);
   });
 });

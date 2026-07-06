@@ -23,8 +23,8 @@ const OUR_EVENTS: Record<string, string | undefined> = {
   SessionEnd: undefined,
 };
 
-function ourEntry(hookMainPath: string, matcher: string | undefined): HookMatcherEntry {
-  const entry: HookMatcherEntry = { hooks: [{ type: "command", command: `bun ${hookMainPath}`, timeout: 10 }] };
+function ourEntry(hookMainPath: string, matcher: string | undefined, bunPath: string): HookMatcherEntry {
+  const entry: HookMatcherEntry = { hooks: [{ type: "command", command: `${bunPath} ${hookMainPath}`, timeout: 10 }] };
   if (matcher) entry.matcher = matcher;
   return entry;
 }
@@ -35,15 +35,20 @@ function isOurEntry(entry: HookMatcherEntry): boolean {
 
 /** Pure, idempotent merge: for each of our four events, drop any prior entry of ours and
  * append a fresh one — entries belonging to other tools on the same event are preserved
- * untouched. Every other top-level settings key is passed through unchanged. */
-export function mergeHooks(settings: Settings, hookMainPath: string): Settings {
+ * untouched. Every other top-level settings key is passed through unchanged.
+ *
+ * `bunPath` must be an absolute path (callers should pass `process.execPath`), not the bare
+ * string "bun" — hook commands run through a non-interactive shell that does not source
+ * .zshrc/.bashrc, so a bun installed via a PATH export made there (as the official bun
+ * installer does) would be unresolvable and every hook invocation would silently fail. */
+export function mergeHooks(settings: Settings, hookMainPath: string, bunPath: string): Settings {
   const next: Settings = { ...settings };
   const hooks: Record<string, HookMatcherEntry[]> = { ...(next.hooks ?? {}) };
 
   for (const [event, matcher] of Object.entries(OUR_EVENTS)) {
     const existing = Array.isArray(hooks[event]) ? hooks[event] : [];
     const withoutOurs = existing.filter((e) => !isOurEntry(e));
-    hooks[event] = [...withoutOurs, ourEntry(hookMainPath, matcher)];
+    hooks[event] = [...withoutOurs, ourEntry(hookMainPath, matcher, bunPath)];
   }
 
   next.hooks = hooks;
