@@ -1,0 +1,16 @@
+#!/bin/sh
+# Launch a claude session joined to a sync group. Plain `claude` is never affected —
+# CLAUDE_SYNC_GROUP is what the hook guard checks first, and only this wrapper sets it.
+set -eu
+
+if [ -z "${1:-}" ]; then
+  echo "usage: csync <group> [claude args...]" >&2
+  exit 2
+fi
+
+group="$1"
+shift
+
+claude-sync daemon ensure >/dev/null 2>&1 &
+
+CLAUDE_SYNC_GROUP="$group" exec claude "$@"
