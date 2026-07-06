@@ -9,9 +9,7 @@
   },
   "scripts": {
     "test": "bun test",
-    "daemon": "bun src/daemon/index.ts --foreground",
-    "install-hooks": "bun src/install/install.ts",
-    "uninstall-hooks": "bun src/install/uninstall.ts"
+    "daemon": "bun src/daemon/index.ts --foreground"
   },
   "devDependencies": {
     "@types/bun": "latest"
