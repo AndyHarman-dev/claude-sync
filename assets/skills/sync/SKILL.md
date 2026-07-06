@@ -38,6 +38,11 @@ directory. If no such identity is known, omit it — the CLI falls back to match
   ```
   claude-sync leave --cwd "$PWD" [--session <label>]
   ```
+- **Setup** (only if the user asks how to install/uninstall claude-sync itself, not part of normal per-session use): by default `claude-sync install` merges hooks into the global `~/.claude/settings.json`, so every session on the machine can opt into sync. Pass `--project` to scope it to just the current project instead — hooks and the `/sync` skill are written to `<cwd>/.claude/` so only sessions started there ever see claude-sync at all.
+  ```
+  claude-sync install [--project] [--cwd <path>]
+  claude-sync uninstall [--project] [--cwd <path>] [--purge]
+  ```
 
 ## Notes for the model
 
