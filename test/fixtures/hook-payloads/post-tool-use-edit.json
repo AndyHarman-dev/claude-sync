@@ -1,0 +1,13 @@
+{
+  "session_id": "sess-aaa111",
+  "cwd": "/tmp/claude-sync-fixture-repo",
+  "transcript_path": "/Users/wiam/.claude/projects/-tmp-claude-sync-fixture-repo/sess-aaa111.jsonl",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Edit",
+  "tool_input": {
+    "file_path": "src/auth/middleware.ts",
+    "old_string": "old",
+    "new_string": "new"
+  },
+  "permission_mode": "default"
+}
