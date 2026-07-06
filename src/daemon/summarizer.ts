@@ -79,11 +79,20 @@ export function parseRecapResponse(raw: string): RecapBody | undefined {
 }
 
 export async function runHaikuSummarize(prompt: string): Promise<string> {
+  // Defense in depth: the daemon already scrubs CLAUDE_SYNC_GROUP from its own env before
+  // this can be reached (see runForeground), but a stray env var here would make this
+  // headless call trip its own SessionStart hook and register itself as a phantom group
+  // member — so scrub explicitly rather than relying solely on the caller. --tools ""
+  // additionally ensures this is pure text generation, never a tool-using turn.
+  const env = { ...process.env };
+  delete env.CLAUDE_SYNC_GROUP;
+
   const proc = Bun.spawn({
-    cmd: ["claude", "-p", prompt, "--model", "haiku", "--output-format", "json"],
+    cmd: ["claude", "-p", prompt, "--model", "haiku", "--output-format", "json", "--tools", ""],
     stdout: "pipe",
     stderr: "pipe",
     cwd: paths.root(),
+    env,
   });
   const timer = setTimeout(() => proc.kill(), 60_000);
   let stdout: string;

@@ -8,11 +8,13 @@ import { findAllDirtySessions } from "./poller";
 import { SummarizerQueue } from "./summarizer";
 import { rebuildGroupDigest } from "./digest-writer";
 import { startControlServer, type ControlCommand } from "./control";
+import { runTombstoneEviction, runOrphanFileGC } from "./eviction";
 import { log } from "./log";
 
 const POLL_INTERVAL_MS = 2_000;
 const DEBOUNCE_MS = 10_000;
 const MAX_STALENESS_MS = 60_000;
+const EVICTION_INTERVAL_MS = 60_000;
 
 interface DirtyState {
   firstDirtyAt: number;
@@ -111,6 +113,16 @@ async function handleControlCommand(queue: SummarizerQueue, cmd: ControlCommand)
 }
 
 export async function runForeground(): Promise<void> {
+  // ensureDaemon() is typically invoked from inside a synced session's SessionStart hook
+  // (via spawn with `env: process.env`), so this process would otherwise inherit
+  // CLAUDE_SYNC_GROUP from whichever session happened to start it. The daemon serves every
+  // group, it must never appear to *be* a member of one — and just as importantly, every
+  // `claude -p` child it spawns for summarization (see summarizer.ts) inherits process.env
+  // by default, so leaving this set would make the summarizer's own headless calls trip
+  // their own SessionStart hook and register a phantom "session" back into the group,
+  // which then gets summarized itself in an unbounded feedback loop.
+  delete process.env.CLAUDE_SYNC_GROUP;
+
   if (!(await acquirePidLock())) {
     console.error("claude-sync daemon already running");
     process.exitCode = 1;
@@ -140,12 +152,20 @@ export async function runForeground(): Promise<void> {
   await startControlServer((cmd) => handleControlCommand(queue, cmd));
 
   const dirtyState = new Map<string, DirtyState>();
+  let lastEvictionAt = 0;
 
   while (!stopped) {
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
     if (stopped) break;
 
     try {
+      const now0 = Date.now();
+      if (now0 - lastEvictionAt >= EVICTION_INTERVAL_MS) {
+        lastEvictionAt = now0;
+        await runTombstoneEviction(now0).catch((err) => log(`tombstone eviction error: ${err}`));
+        await runOrphanFileGC(now0).catch((err) => log(`orphan file gc error: ${err}`));
+      }
+
       const dirty = await findAllDirtySessions();
       const memberships = await listMemberships();
       const byId = new Map(memberships.map((m) => [m.session_id, m]));
