@@ -57,8 +57,14 @@ export async function acquirePidLock(): Promise<boolean> {
 }
 
 /** Spawn a detached daemon process if one isn't already running. Fire-and-forget — never
- * awaited by callers on the hook hot path. */
+ * awaited by callers on the hook hot path.
+ *
+ * CLAUDE_SYNC_SKIP_DAEMON_ENSURE is a test-only escape hatch: it lets hook/CLI tests run
+ * against a throwaway sandbox data dir without actually forking a real daemon process
+ * that would outlive the test and poll a since-deleted directory. */
 export async function ensureDaemon(): Promise<void> {
+  if (process.env.CLAUDE_SYNC_SKIP_DAEMON_ENSURE) return;
+
   const status = await daemonStatus();
   if (status.running) return;
 

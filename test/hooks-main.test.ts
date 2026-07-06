@@ -34,6 +34,8 @@ async function runHook(fixtureName: string, env: Record<string, string | undefin
     if (value === undefined) delete merged[key];
     else merged[key] = value;
   }
+  // Never let a test's SessionStart fixture fork a real daemon against a throwaway sandbox.
+  merged.CLAUDE_SYNC_SKIP_DAEMON_ENSURE = "1";
   const start = performance.now();
   const proc = Bun.spawn({
     cmd: ["bun", HOOK_ENTRY],

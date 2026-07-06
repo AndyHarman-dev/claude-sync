@@ -208,4 +208,15 @@ describe("renderDigest", () => {
     const text = renderDigest({ digest });
     expect(text).toContain("(none yet)");
   });
+
+  test("renders an unchanged-count summary line for delta injection", () => {
+    const digest = buildDigest({
+      group: "demo",
+      prev: undefined,
+      memberships: [membership({ session_id: "s1" }), membership({ session_id: "s2", cwd: "/repo/b", repo: "b" })],
+      recaps: new Map(),
+    });
+    const text = renderDigest({ digest, entries: { s1: digest.sessions.s1! }, unchangedCount: 1 });
+    expect(text).toContain("1 unchanged session");
+  });
 });

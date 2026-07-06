@@ -4,6 +4,12 @@ import { registerSession, heartbeat, endSession, getMembership } from "../lib/re
 import { appendJournal } from "../lib/journal";
 import { detectRepo } from "../lib/repo";
 import { CAPS, clampStr } from "../lib/types";
+import type { Digest } from "../lib/types";
+import { readJson } from "../lib/atomic";
+import { paths } from "../lib/paths";
+import { getCursor, setCursor } from "../lib/cursor";
+import { renderDigest, deltaSessions, sessionLabel } from "../lib/digest";
+import { ensureDaemon } from "../daemon/index";
 
 interface RawHookPayload {
   session_id?: string;
@@ -22,6 +28,10 @@ async function readStdin(): Promise<string> {
     chunks.push(Buffer.from(chunk));
   }
   return Buffer.concat(chunks).toString("utf8");
+}
+
+function emitAdditionalContext(hookEventName: string, text: string): void {
+  console.log(JSON.stringify({ hookSpecificOutput: { hookEventName, additionalContext: text } }));
 }
 
 export async function run(): Promise<void> {
@@ -53,15 +63,41 @@ export async function run(): Promise<void> {
   switch (eventName) {
     case "SessionStart": {
       await appendJournal(group, sessionId, { v: 1, t: Date.now(), e: "start", cwd, repo });
-      // Phase 2+: fire-and-forget daemon ensure
-      // Phase 3+: inject full digest via additionalContext
+      await ensureDaemon().catch(() => {});
+
+      const digest = await readJson<Digest>(paths.digestFile(group));
+      const identity = `You are sync session ${sessionLabel(sessionId)} in group "${group}".`;
+      if (digest) {
+        const block = renderDigest({ digest, excludeSessionId: sessionId });
+        emitAdditionalContext(eventName, `${identity}\n${block}`);
+        await setCursor(group, sessionId, digest.version);
+      } else {
+        emitAdditionalContext(eventName, identity);
+        await setCursor(group, sessionId, 0);
+      }
       break;
     }
     case "UserPromptSubmit": {
       await heartbeat(sessionId);
       const text = typeof payload.prompt === "string" ? clampStr(payload.prompt, CAPS.promptTruncate) : "";
       await appendJournal(group, sessionId, { v: 1, t: Date.now(), e: "prompt", text });
-      // Phase 3+: staleness check + inject delta
+
+      const digest = await readJson<Digest>(paths.digestFile(group));
+      if (digest) {
+        const cursor = await getCursor(group, sessionId);
+        const cursorVersion = cursor?.digest_version ?? 0;
+        if (digest.version > cursorVersion) {
+          const delta = deltaSessions(digest, cursorVersion, sessionId);
+          const deltaIds = Object.keys(delta);
+          if (deltaIds.length > 0) {
+            const totalOthers = Object.keys(digest.sessions).filter((id) => id !== sessionId).length;
+            const unchangedCount = totalOthers - deltaIds.length;
+            const block = renderDigest({ digest, excludeSessionId: sessionId, entries: delta, unchangedCount });
+            emitAdditionalContext(eventName, block);
+          }
+          await setCursor(group, sessionId, digest.version);
+        }
+      }
       break;
     }
     case "PostToolUse": {
