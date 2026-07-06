@@ -235,3 +235,9 @@ bun run daemon    # run the daemon in the foreground for debugging
 
 `CLAUDE_SYNC_DATA_DIR` overrides the data root for any command — tests use it to run
 against a disposable temp directory instead of `~/.claude-sync`.
+
+## License
+
+[PolyForm Noncommercial License 1.0.0](LICENSE) — free to use, modify, and self-host for
+any noncommercial purpose. Not licensed for commercial use or as the basis of a commercial
+product or service.
