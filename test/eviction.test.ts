@@ -61,6 +61,25 @@ describe("foldHistoryEntry (pure)", () => {
     expect(folded).toContain("no recorded activity");
   });
 
+  test("a newest entry whose own recap.recent list is internally '; '-joined is never itself truncated by the entry-boundary search", () => {
+    // Regression: entries used to be joined with the SAME "; " separator used to join a
+    // single entry's own recent-items list, so the truncation boundary search could match
+    // an internal separator instead of the true entry-to-entry boundary and cut the
+    // newest entry's own label + first recent item off.
+    const longPrev = "x".repeat(CAPS.historyMax);
+    const recap: Recap = {
+      v: 1,
+      session_id: "s1",
+      updated_at: 1,
+      journal_offset: 1,
+      recap: { focus: "", recent: [{ repo: "a", summary: "fixed the auth bug" }, { repo: "a", summary: "updated the tests" }], problems: [] },
+    };
+    const folded = foldHistoryEntry(longPrev, "s1", recap);
+    expect(folded.length).toBeLessThanOrEqual(CAPS.historyMax);
+    // the whole newest entry — both recent items AND its "s1:" label — must survive intact
+    expect(folded).toContain("s1: fixed the auth bug; updated the tests");
+  });
+
   test("clamps to CAPS.historyMax, keeping the newest entry rather than truncating it away", () => {
     const longPrev = "x".repeat(CAPS.historyMax);
     const folded = foldHistoryEntry(longPrev, "s1", { v: 1, session_id: "s1", updated_at: 1, journal_offset: 1, recap: { focus: "the newest event", recent: [], problems: [] } });

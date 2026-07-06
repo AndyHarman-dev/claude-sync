@@ -5,7 +5,7 @@ import { appendJournal } from "../lib/journal";
 import { detectRepo } from "../lib/repo";
 import { CAPS, clampStr } from "../lib/types";
 import type { Digest } from "../lib/types";
-import { readJson } from "../lib/atomic";
+import { readJson, removeIfExists } from "../lib/atomic";
 import { paths } from "../lib/paths";
 import { getCursor, setCursor } from "../lib/cursor";
 import { renderDigest, deltaSessions, sessionLabel } from "../lib/digest";
@@ -56,8 +56,18 @@ export async function run(): Promise<void> {
   const existing = outcome.kind === "member" ? outcome.membership : await getMembership(sessionId);
   const repo = existing?.repo ?? detectRepo(cwd);
 
-  if (!existing) {
+  // Register whenever there's no record yet, or the record is stale relative to what this
+  // event resolved to (ended — e.g. a rejoin after /sync leave — or pointing at a
+  // different group). guard() already returns "member" only for an active, current-group
+  // record, so this only fires on the cases that actually need a write.
+  if (!existing || existing.status !== "active" || existing.group !== group) {
     await registerSession({ sessionId, group, cwd, repo, transcriptPath: payload.transcript_path });
+  }
+  // Only consume the pending-join ticket once registration has actually succeeded — if
+  // anything above threw, the ticket stays in place so the join can be retried instead of
+  // being silently lost.
+  if (outcome.kind === "claim") {
+    await removeIfExists(outcome.pendingPath);
   }
 
   switch (eventName) {

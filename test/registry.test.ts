@@ -45,6 +45,23 @@ describe("registerSession / getMembership / isMember", () => {
   test("isMember is false for unknown session", async () => {
     expect(await isMember("nope")).toBe(false);
   });
+
+  test("re-registering an ended session reactivates it to active", async () => {
+    await registerSession({ sessionId: "s1", group: "demo", cwd: "/repo/a", repo: "a" });
+    await endSession("s1");
+    const reactivated = await registerSession({ sessionId: "s1", group: "demo", cwd: "/repo/a", repo: "a" });
+    expect(reactivated.status).toBe("active");
+    expect(await getMembership("s1")).toEqual(reactivated);
+  });
+
+  test("re-registering an ended session under a NEW group actually moves it, not just reactivates the old group", async () => {
+    const first = await registerSession({ sessionId: "s1", group: "alpha", cwd: "/repo/a", repo: "a" });
+    await endSession("s1");
+    const rejoined = await registerSession({ sessionId: "s1", group: "beta", cwd: "/repo/a", repo: "a" });
+    expect(rejoined.group).toBe("beta");
+    expect(rejoined.status).toBe("active");
+    expect(rejoined.joined_at).toBe(first.joined_at); // joined_at is still preserved
+  });
 });
 
 describe("heartbeat", () => {
@@ -96,6 +113,24 @@ describe("listMemberships / resolveByCwd", () => {
     await registerSession({ sessionId: "s1", group: "alpha", cwd: "/repo/a", repo: "a" });
     await registerSession({ sessionId: "s2", group: "beta", cwd: "/repo/a", repo: "a" });
     const resolved = await resolveByCwd("/repo/a", "alpha");
+    expect(resolved!.session_id).toBe("s1");
+  });
+
+  test("resolveByCwd prefers an active session even when an ended session has a more recent last_seen", async () => {
+    await registerSession({ sessionId: "s1", group: "demo", cwd: "/repo/a", repo: "a" });
+    await registerSession({ sessionId: "s2", group: "demo", cwd: "/repo/a", repo: "a" });
+    // s2 "leaves" after both were registered, so its last_seen is now the most recent —
+    // but it's no longer the session anyone should be operating on.
+    await endSession("s2");
+
+    const resolved = await resolveByCwd("/repo/a");
+    expect(resolved!.session_id).toBe("s1");
+  });
+
+  test("resolveByCwd falls back to the most recent match of any status when none are active", async () => {
+    await registerSession({ sessionId: "s1", group: "demo", cwd: "/repo/a", repo: "a" });
+    await endSession("s1");
+    const resolved = await resolveByCwd("/repo/a");
     expect(resolved!.session_id).toBe("s1");
   });
 });

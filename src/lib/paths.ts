@@ -5,8 +5,13 @@ function dataRoot(): string {
   return process.env.CLAUDE_SYNC_DATA_DIR ?? join(homedir(), ".claude-sync");
 }
 
+/** A readable slug plus a hash of the full path — the slug alone isn't collision-free
+ * (e.g. "/repo/a" and "/repo-a" both collapse to "-repo-a"), which would let a
+ * pending-join intended for one cwd be silently claimed by a session in the other. */
 export function mungeCwd(cwd: string): string {
-  return cwd.replace(/[^a-zA-Z0-9]/g, "-");
+  const slug = cwd.replace(/[^a-zA-Z0-9]/g, "-");
+  const hash = Bun.hash(cwd).toString(36);
+  return `${slug}-${hash}`;
 }
 
 export const paths = {

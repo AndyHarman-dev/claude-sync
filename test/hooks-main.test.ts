@@ -118,9 +118,10 @@ describe("hooks/main.ts — plain session (no env, not a member)", () => {
 });
 
 describe("hooks/main.ts — join via pending-joins bridge", () => {
-  test("SessionStart claims a fresh pending join and starts journaling", async () => {
-    const { writeJsonAtomic } = await import("../src/lib/atomic");
-    await writeJsonAtomic(paths.pendingJoinFile("/tmp/claude-sync-fixture-repo"), {
+  test("SessionStart claims a fresh pending join, starts journaling, and consumes the ticket", async () => {
+    const { writeJsonAtomic, fileExists } = await import("../src/lib/atomic");
+    const pendingPath = paths.pendingJoinFile("/tmp/claude-sync-fixture-repo");
+    await writeJsonAtomic(pendingPath, {
       v: 1,
       group: "joined-group",
       created_at: Date.now(),
@@ -131,5 +132,30 @@ describe("hooks/main.ts — join via pending-joins bridge", () => {
 
     const membership = await getMembership("sess-aaa111");
     expect(membership!.group).toBe("joined-group");
+    // The ticket is only consumed once registration actually succeeded.
+    expect(await fileExists(pendingPath)).toBe(false);
+  });
+
+  test("rejoining after /sync leave (ended membership + fresh pending join) reactivates under the new group", async () => {
+    const { writeJsonAtomic } = await import("../src/lib/atomic");
+    const { endSession } = await import("../src/lib/registry");
+
+    // Simulate: session previously joined "old-group" then left.
+    await runHook("session-start.json", { CLAUDE_SYNC_GROUP: "old-group", CLAUDE_SYNC_DATA_DIR: dir });
+    await endSession("sess-aaa111");
+
+    // Then /sync join wrote a pending ticket for a different group.
+    await writeJsonAtomic(paths.pendingJoinFile("/tmp/claude-sync-fixture-repo"), {
+      v: 1,
+      group: "new-group",
+      created_at: Date.now(),
+    });
+
+    const result = await runHook("user-prompt-submit.json", { CLAUDE_SYNC_GROUP: undefined, CLAUDE_SYNC_DATA_DIR: dir });
+    expect(result.exitCode).toBe(0);
+
+    const membership = await getMembership("sess-aaa111");
+    expect(membership!.status).toBe("active");
+    expect(membership!.group).toBe("new-group");
   });
 });

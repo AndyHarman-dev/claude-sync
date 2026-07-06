@@ -168,7 +168,11 @@ export async function processSession(params: {
     return { ok: false };
   }
 
-  const recap: Recap = { v: 1, session_id: sessionId, updated_at: Date.now(), journal_offset: newOffset, recap: parsedBody };
+  // The model is never asked to produce `pinned` (it's not part of the requested JSON
+  // schema), so parsedBody.pinned is always undefined here — carry the prior pinned note
+  // forward rather than letting every LLM summarization silently erase it.
+  const recapBody = { ...parsedBody, pinned: parsedBody.pinned ?? prevRecap?.recap.pinned };
+  const recap: Recap = { v: 1, session_id: sessionId, updated_at: Date.now(), journal_offset: newOffset, recap: recapBody };
   await writeJsonAtomic(paths.recapFile(group, sessionId), recap);
   return { ok: true, recap };
 }

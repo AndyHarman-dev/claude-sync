@@ -11,13 +11,20 @@ export async function startControlServer(handler: ControlHandler) {
   const sockPath = paths.daemonSock();
   await unlink(sockPath).catch(() => {});
 
+  // Per-connection buffer for lines split across multiple `data` events — a unix socket
+  // read is not guaranteed to deliver a full NDJSON line in one chunk. Keyed by socket
+  // object identity; entries are naturally abandoned (and GC'd) once a connection closes.
+  const buffers = new WeakMap<object, string>();
+
   return Bun.listen({
     unix: sockPath,
     socket: {
       data(socket, data) {
         void (async () => {
-          const text = Buffer.from(data).toString("utf8");
-          for (const line of text.split("\n")) {
+          const combined = (buffers.get(socket) ?? "") + Buffer.from(data).toString("utf8");
+          const lines = combined.split("\n");
+          buffers.set(socket, lines.pop() ?? "");
+          for (const line of lines) {
             if (!line.trim()) continue;
             try {
               const cmd = JSON.parse(line) as ControlCommand;
@@ -49,6 +56,7 @@ export async function sendControlCommand(cmd: ControlCommand, timeoutMs = 30_000
     };
 
     const timer = setTimeout(() => finish(undefined), timeoutMs);
+    let buffer = "";
 
     let socket: Awaited<ReturnType<typeof Bun.connect>> | undefined;
     Bun.connect({
@@ -58,9 +66,12 @@ export async function sendControlCommand(cmd: ControlCommand, timeoutMs = 30_000
           sock.write(`${JSON.stringify(cmd)}\n`);
         },
         data(_sock, data) {
+          buffer += Buffer.from(data).toString("utf8");
+          const newlineAt = buffer.indexOf("\n");
+          if (newlineAt === -1) return; // wait for the rest of the line
           clearTimeout(timer);
           try {
-            finish(JSON.parse(Buffer.from(data).toString("utf8")));
+            finish(JSON.parse(buffer.slice(0, newlineAt)));
           } catch {
             finish(undefined);
           }

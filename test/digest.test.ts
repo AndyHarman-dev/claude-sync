@@ -209,6 +209,31 @@ describe("renderDigest", () => {
     expect(text).toContain("(none yet)");
   });
 
+  test("a full render (SessionStart) includes group history when present", () => {
+    const digest = buildDigest({ group: "demo", prev: undefined, memberships: [], recaps: new Map() });
+    digest.history = "a1b2c3d4: shipped the auth rewrite";
+    const text = renderDigest({ digest });
+    expect(text).toContain("shipped the auth rewrite");
+  });
+
+  test("a delta render (UserPromptSubmit, entries provided) omits history even when present", () => {
+    const digest = buildDigest({
+      group: "demo",
+      prev: undefined,
+      memberships: [membership({ session_id: "s1" })],
+      recaps: new Map(),
+    });
+    digest.history = "a1b2c3d4: shipped the auth rewrite";
+    const text = renderDigest({ digest, entries: { s1: digest.sessions.s1! } });
+    expect(text).not.toContain("shipped the auth rewrite");
+  });
+
+  test("omits the history line entirely when history is empty", () => {
+    const digest = buildDigest({ group: "demo", prev: undefined, memberships: [], recaps: new Map() });
+    const text = renderDigest({ digest });
+    expect(text).not.toContain("Earlier in this group");
+  });
+
   test("renders an unchanged-count summary line for delta injection", () => {
     const digest = buildDigest({
       group: "demo",

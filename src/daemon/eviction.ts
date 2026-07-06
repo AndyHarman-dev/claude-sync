@@ -6,7 +6,7 @@ import { listGroups } from "./poller";
 import { sessionLabel } from "../lib/digest";
 import { CAPS } from "../lib/types";
 import type { Membership, Recap, Digest } from "../lib/types";
-import { rebuildGroupDigest } from "./digest-writer";
+import { rebuildGroupDigest, withGroupDigestLock } from "./digest-writer";
 import { log } from "./log";
 
 /** How long an ended session stays visible in the digest as "left the group" before its
@@ -28,14 +28,17 @@ export function foldHistoryEntry(prevHistory: string, sessionId: string, recap: 
   if (recap?.recap.recent.length) bits.push(recap.recap.recent.map((r) => r.summary).join("; "));
   const summary = bits.join(" — ") || "no recorded activity";
   const entry = `${sessionLabel(sessionId)}: ${summary}`;
-  const combined = prevHistory ? `${prevHistory}; ${entry}` : entry;
+  // Entries are newline-separated — deliberately distinct from the "; " used just above to
+  // join a single entry's own recap.recent summaries, so the truncation boundary search
+  // below can never mistake an internal list separator for an entry boundary.
+  const combined = prevHistory ? `${prevHistory}\n${entry}` : entry;
   if (combined.length <= CAPS.historyMax) return combined;
 
   // Drop whole oldest entries rather than slicing mid-character — the newest entry (the
   // one we just added) must never itself be cut short by the cap.
   const rawCut = combined.slice(combined.length - CAPS.historyMax);
-  const boundary = rawCut.indexOf("; ");
-  return boundary === -1 ? rawCut : rawCut.slice(boundary + 2);
+  const boundary = rawCut.indexOf("\n");
+  return boundary === -1 ? rawCut : rawCut.slice(boundary + 1);
 }
 
 export function isEvictable(m: Membership, now: number): boolean {
@@ -61,20 +64,25 @@ export async function runTombstoneEviction(now = Date.now()): Promise<void> {
     const evictable = groupMemberships.filter((m) => isEvictable(m, now));
     if (evictable.length === 0) continue;
 
-    const digest = await readJson<Digest>(paths.digestFile(group));
-    let history = digest?.history ?? "";
-    for (const m of evictable) {
-      const recap = await readJson<Recap>(paths.recapFile(group, m.session_id));
-      history = foldHistoryEntry(history, m.session_id, recap);
-      await removeIfExists(paths.sessionFile(m.session_id));
-      await log(`evicted ${group}:${m.session_id} into history`);
-    }
+    // The read, fold, and write all happen inside the same group lock that
+    // rebuildGroupDigest uses, so a concurrent summarizer-triggered rebuild can never read
+    // a stale pre-fold digest and clobber this write.
+    await withGroupDigestLock(group, async () => {
+      const digest = await readJson<Digest>(paths.digestFile(group));
+      let history = digest?.history ?? "";
+      for (const m of evictable) {
+        const recap = await readJson<Recap>(paths.recapFile(group, m.session_id));
+        history = foldHistoryEntry(history, m.session_id, recap);
+        await removeIfExists(paths.sessionFile(m.session_id));
+        await log(`evicted ${group}:${m.session_id} into history`);
+      }
 
-    // Persist the updated history immediately — it must never be lost even if the
-    // subsequent digest rebuild below decides nothing else changed.
-    if (digest) {
-      await writeJsonAtomic(paths.digestFile(group), { ...digest, history });
-    }
+      // Persist the updated history immediately — it must never be lost even if the
+      // subsequent digest rebuild below decides nothing else changed.
+      if (digest) {
+        await writeJsonAtomic(paths.digestFile(group), { ...digest, history });
+      }
+    });
     await rebuildGroupDigest(group);
   }
 }

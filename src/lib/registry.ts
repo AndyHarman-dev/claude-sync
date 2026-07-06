@@ -20,19 +20,21 @@ export async function registerSession(params: {
 }): Promise<Membership> {
   const existing = await getMembership(params.sessionId);
   const now = Date.now();
-  const membership: Membership = existing ?? {
+  // group/cwd/repo/status always come from the current call's params, even when a prior
+  // (possibly ended, possibly different-group) record exists — a rejoin must actually
+  // move the session to the new group rather than silently reactivating the old one.
+  // joined_at is the one field worth preserving across re-registrations.
+  const membership: Membership = {
     v: 1,
     session_id: params.sessionId,
     group: params.group,
     cwd: params.cwd,
     repo: params.repo,
-    transcript_path: params.transcriptPath,
-    joined_at: now,
+    transcript_path: params.transcriptPath ?? existing?.transcript_path,
+    joined_at: existing?.joined_at ?? now,
     last_seen: now,
     status: "active",
   };
-  membership.last_seen = now;
-  membership.status = "active";
   await writeJsonAtomic(paths.sessionFile(params.sessionId), membership);
   return membership;
 }
@@ -70,11 +72,17 @@ export async function listMemberships(): Promise<Membership[]> {
 }
 
 /** Resolve the most recently active session registered against a given cwd (used by the
- * CLI, which only knows its cwd, never its own session_id). */
+ * CLI, which only knows its cwd, never its own session_id). Prefers an active session over
+ * an ended one regardless of timestamps — an ended session's last_seen can be more recent
+ * than a genuinely active one's (e.g. right after a `/sync leave`), and callers like
+ * `status`/`now`/`push`/`leave` want the live session, not whichever happened to touch
+ * its file last. Falls back to the most recent match of any status if none are active. */
 export async function resolveByCwd(cwd: string, group?: string): Promise<Membership | undefined> {
   const all = await listMemberships();
   const matches = all.filter((m) => m.cwd === cwd && (!group || m.group === group));
   if (matches.length === 0) return undefined;
-  matches.sort((a, b) => b.last_seen - a.last_seen);
-  return matches[0];
+  const active = matches.filter((m) => m.status === "active");
+  const pool = active.length > 0 ? active : matches;
+  pool.sort((a, b) => b.last_seen - a.last_seen);
+  return pool[0];
 }

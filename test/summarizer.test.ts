@@ -115,6 +115,35 @@ describe("processSession", () => {
     expect(result.recap?.recap.focus).toBe("doing the thing");
   });
 
+  test("a previously pinned note survives a later mixed-batch LLM summarization instead of being silently erased", async () => {
+    // First: a pure-note batch pins a note via the fast path.
+    await appendJournal("demo", "s1", { v: 1, t: 1, e: "note", text: "don't touch schema.sql" });
+    const pinned = await processSession({
+      group: "demo",
+      sessionId: "s1",
+      repo: "a",
+      cwd: "/repo/a",
+      backend: async () => {
+        throw new Error("fast path should not call the backend");
+      },
+    });
+    expect(pinned.recap?.recap.pinned).toBe("don't touch schema.sql");
+
+    // Then: a mixed batch (any non-note event) goes through the LLM path, whose schema
+    // never includes `pinned` — it must not vanish as a result.
+    await appendJournal("demo", "s1", { v: 1, t: 2, e: "prompt", text: "keep working" });
+    const summarized = await processSession({
+      group: "demo",
+      sessionId: "s1",
+      repo: "a",
+      cwd: "/repo/a",
+      backend: async () => JSON.stringify({ focus: "still working", recent: [], problems: [] }),
+    });
+    expect(summarized.ok).toBe(true);
+    expect(summarized.recap?.recap.focus).toBe("still working");
+    expect(summarized.recap?.recap.pinned).toBe("don't touch schema.sql");
+  });
+
   test("no new journal lines is a skipped success, recap untouched", async () => {
     await appendJournal("demo", "s1", { v: 1, t: 1, e: "start", cwd: "/repo/a", repo: "a" });
     const first = await processSession({

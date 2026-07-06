@@ -1,5 +1,5 @@
 import { paths } from "../lib/paths";
-import { readJson, removeIfExists } from "../lib/atomic";
+import { readJson } from "../lib/atomic";
 import { getMembership } from "../lib/registry";
 import type { PendingJoin, Membership } from "../lib/types";
 
@@ -15,7 +15,7 @@ export interface HookPayload {
 export type GuardOutcome =
   | { kind: "env"; group: string }
   | { kind: "member"; group: string; membership: Membership }
-  | { kind: "claim"; group: string }
+  | { kind: "claim"; group: string; pendingPath: string }
   | { kind: "none" };
 
 /**
@@ -37,8 +37,10 @@ export async function guard(payload: HookPayload): Promise<GuardOutcome> {
     const pendingPath = paths.pendingJoinFile(payload.cwd);
     const pending = await readJson<PendingJoin>(pendingPath);
     if (pending && Date.now() - pending.created_at < PENDING_JOIN_TTL_MS) {
-      await removeIfExists(pendingPath);
-      return { kind: "claim", group: pending.group };
+      // Deliberately NOT deleted here: the caller (hooks/main.ts) only removes it after
+      // registerSession actually succeeds, so a failure in between leaves the ticket in
+      // place to retry on the next event instead of silently losing the join forever.
+      return { kind: "claim", group: pending.group, pendingPath };
     }
   }
 

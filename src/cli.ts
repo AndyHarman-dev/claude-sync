@@ -87,7 +87,11 @@ async function cmdNow(flags: Flags): Promise<void> {
     return;
   }
 
-  const response = (await sendControlCommand({ cmd: "summarize_now", session_id: membership.session_id })) as
+  // The daemon's handler awaits the full summarize retry chain before responding — up to
+  // ~215s worst case (three attempts at up to 60s each, plus 5s/30s backoffs). The default
+  // 30s client timeout would report a healthy, still-working daemon as "not running", so
+  // `now` gets a generous timeout of its own; every other command keeps the 30s default.
+  const response = (await sendControlCommand({ cmd: "summarize_now", session_id: membership.session_id }, 220_000)) as
     | { ok: boolean; error?: string }
     | undefined;
   if (!response) {

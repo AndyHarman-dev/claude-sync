@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { guard } from "../src/hooks/guard";
 import { registerSession, endSession } from "../src/lib/registry";
-import { writeJsonAtomic } from "../src/lib/atomic";
+import { writeJsonAtomic, fileExists } from "../src/lib/atomic";
 import { paths } from "../src/lib/paths";
 import type { PendingJoin } from "../src/lib/types";
 
@@ -52,16 +52,19 @@ describe("guard decision table", () => {
     expect(outcome).toEqual({ kind: "none" });
   });
 
-  test("fresh pending join claimed on SessionStart, and the pending file is consumed", async () => {
+  test("fresh pending join returns claim with its path, but guard() itself does not delete it", async () => {
     const pending: PendingJoin = { v: 1, group: "demo", created_at: Date.now() };
-    await writeJsonAtomic(paths.pendingJoinFile("/repo/a"), pending);
+    const pendingPath = paths.pendingJoinFile("/repo/a");
+    await writeJsonAtomic(pendingPath, pending);
 
     const outcome = await guard({ session_id: "new-sess", cwd: "/repo/a", hook_event_name: "SessionStart" });
-    expect(outcome).toEqual({ kind: "claim", group: "demo" });
+    expect(outcome).toEqual({ kind: "claim", group: "demo", pendingPath });
 
-    // consumed: a second guard call finds nothing pending
+    // Deletion is the caller's responsibility (only after registration succeeds — see
+    // hooks/main.ts) so the file must still be there; a repeat call still sees it pending.
+    expect(await fileExists(pendingPath)).toBe(true);
     const second = await guard({ session_id: "new-sess-2", cwd: "/repo/a", hook_event_name: "SessionStart" });
-    expect(second).toEqual({ kind: "none" });
+    expect(second).toEqual({ kind: "claim", group: "demo", pendingPath });
   });
 
   test("pending join is NOT claimed on PostToolUse (only SessionStart/UserPromptSubmit)", async () => {
