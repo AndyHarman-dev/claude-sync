@@ -64,10 +64,11 @@ describe("foldHistoryEntry (pure)", () => {
   test("clamps to CAPS.historyMax, keeping the newest entry rather than truncating it away", () => {
     const longPrev = "x".repeat(CAPS.historyMax);
     const folded = foldHistoryEntry(longPrev, "s1", { v: 1, session_id: "s1", updated_at: 1, journal_offset: 1, recap: { focus: "the newest event", recent: [], problems: [] } });
-    expect(folded.length).toBe(CAPS.historyMax);
-    // the tail (newest entry) survived the clamp — a "keep the head, drop the tail" bug
-    // would truncate the string at historyMax and cut this entry off entirely.
-    expect(folded.endsWith("the newest event")).toBe(true);
+    expect(folded.length).toBeLessThanOrEqual(CAPS.historyMax);
+    // the tail (newest entry) survived the clamp, whole and un-truncated — a "keep the
+    // head, drop the tail" bug would cut this entry off entirely; a mid-character slice
+    // would leave a fragment instead of the full entry text.
+    expect(folded.endsWith("s1: the newest event")).toBe(true);
   });
 });
 

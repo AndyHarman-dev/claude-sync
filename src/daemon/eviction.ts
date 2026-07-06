@@ -29,7 +29,13 @@ export function foldHistoryEntry(prevHistory: string, sessionId: string, recap: 
   const summary = bits.join(" — ") || "no recorded activity";
   const entry = `${sessionLabel(sessionId)}: ${summary}`;
   const combined = prevHistory ? `${prevHistory}; ${entry}` : entry;
-  return combined.length > CAPS.historyMax ? combined.slice(combined.length - CAPS.historyMax) : combined;
+  if (combined.length <= CAPS.historyMax) return combined;
+
+  // Drop whole oldest entries rather than slicing mid-character — the newest entry (the
+  // one we just added) must never itself be cut short by the cap.
+  const rawCut = combined.slice(combined.length - CAPS.historyMax);
+  const boundary = rawCut.indexOf("; ");
+  return boundary === -1 ? rawCut : rawCut.slice(boundary + 2);
 }
 
 export function isEvictable(m: Membership, now: number): boolean {
