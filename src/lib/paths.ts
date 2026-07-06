@@ -19,6 +19,7 @@ export const paths = {
   sessionFile: (sessionId: string): string => join(dataRoot(), "sessions", `${sessionId}.json`),
   pendingJoinsDir: (): string => join(dataRoot(), "pending-joins"),
   pendingJoinFile: (cwd: string): string => join(dataRoot(), "pending-joins", `${mungeCwd(cwd)}.json`),
+  groupsRoot: (): string => join(dataRoot(), "groups"),
   groupDir: (group: string): string => join(dataRoot(), "groups", group),
   journalDir: (group: string): string => join(dataRoot(), "groups", group, "journal"),
   journalFile: (group: string, sessionId: string): string =>
