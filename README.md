@@ -68,7 +68,10 @@ This is safe and reversible:
   re-running install is idempotent and uninstalling only ever removes claude-sync's own
   entries, never another tool's hooks on the same event.
 - Symlinks the `/sync` skill into `~/.claude/skills/sync`.
-- Symlinks the `claude-sync` and `csync` binaries into `~/.local/bin`.
+- Generates `claude-sync` and `csync` wrapper scripts into `~/.local/bin`, with the
+  currently-running bun binary's absolute path baked in — so they work regardless of the
+  caller's `PATH` (a bare `bun` shebang breaks under any shell that doesn't source the
+  `.zshrc`/`.bashrc` line bun's own installer adds).
 - Creates an empty `~/.claude-sync/` data directory.
 
 Plain `claude` sessions are unaffected by any of this: the hooks check for group
@@ -91,10 +94,15 @@ with `--cwd <path>` to target a project directory other than the current one.
 ### Uninstall
 
 ```sh
-claude-sync uninstall            # remove hooks, skill, and binary symlinks
+claude-sync uninstall            # remove hooks, skill, and binary wrappers
 claude-sync uninstall --purge    # also delete ~/.claude-sync (all groups' data)
 claude-sync uninstall --project [--cwd <path>]   # mirror of a --project install
 ```
+
+`--purge` stops a running daemon first, since deleting `~/.claude-sync` out from under a
+still-running daemon would orphan it. A plain uninstall leaves the daemon running — it's
+global, machine-wide state, not scoped to whichever project or settings file you're
+uninstalling from.
 
 ## Usage
 

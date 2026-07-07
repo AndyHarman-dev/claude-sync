@@ -16,12 +16,13 @@ beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "claude-sync-install-"));
   process.env.CLAUDE_SYNC_DATA_DIR = join(dir, "data");
   sandboxPaths = {
-    repoRoot: REAL_REPO_ROOT, // bin/claude-sync and bin/csync must actually exist, for chmod
+    repoRoot: REAL_REPO_ROOT,
     settingsPath: join(dir, "claude-home", "settings.json"),
     hookMainPath: join(REAL_REPO_ROOT, "src", "hooks", "main.ts"),
     skillSrcDir: join(REAL_REPO_ROOT, "assets", "skills", "sync"),
     skillDestDir: join(dir, "claude-home", "skills", "sync"),
     localBinDir: join(dir, "local-bin"),
+    bunPath: process.execPath,
   };
 });
 
@@ -65,20 +66,30 @@ describe("install", () => {
     expect(contents).toBe("{ not valid json");
   });
 
-  test("links the skill and both binaries as symlinks pointing into the repo", async () => {
+  test("links the skill as a symlink, and generates executable bun-path-baked wrappers for the binaries", async () => {
     await install(sandboxPaths);
 
     const skillLink = await lstat(sandboxPaths.skillDestDir);
     expect(skillLink.isSymbolicLink()).toBe(true);
     expect(await readlink(sandboxPaths.skillDestDir)).toBe(sandboxPaths.skillSrcDir);
 
-    const csyncLink = await lstat(join(sandboxPaths.localBinDir, "csync"));
-    expect(csyncLink.isSymbolicLink()).toBe(true);
-    const claudeSyncLink = await lstat(join(sandboxPaths.localBinDir, "claude-sync"));
-    expect(claudeSyncLink.isSymbolicLink()).toBe(true);
+    const claudeSyncPath = join(sandboxPaths.localBinDir, "claude-sync");
+    const claudeSyncStat = await lstat(claudeSyncPath);
+    expect(claudeSyncStat.isSymbolicLink()).toBe(false);
+    expect(claudeSyncStat.mode & 0o111).toBeTruthy(); // executable
+    const claudeSyncContents = await readFile(claudeSyncPath, "utf8");
+    expect(claudeSyncContents).toContain(sandboxPaths.bunPath);
+    expect(claudeSyncContents).toContain(join(sandboxPaths.repoRoot, "src", "cli.ts"));
+
+    const csyncPath = join(sandboxPaths.localBinDir, "csync");
+    const csyncStat = await lstat(csyncPath);
+    expect(csyncStat.isSymbolicLink()).toBe(false);
+    expect(csyncStat.mode & 0o111).toBeTruthy();
+    const csyncContents = await readFile(csyncPath, "utf8");
+    expect(csyncContents).toContain(claudeSyncPath); // csync shells out to the generated claude-sync wrapper by absolute path
   });
 
-  test("re-installing is idempotent and does not error on existing correct symlinks", async () => {
+  test("re-installing is idempotent and does not error on existing generated wrappers", async () => {
     await install(sandboxPaths);
     await install(sandboxPaths); // should not throw
     const settings = JSON.parse(await readFile(sandboxPaths.settingsPath, "utf8"));
@@ -89,6 +100,25 @@ describe("install", () => {
     await mkdir(sandboxPaths.skillDestDir, { recursive: true });
     await writeFile(join(sandboxPaths.skillDestDir, "SKILL.md"), "not ours");
     await expect(install(sandboxPaths)).rejects.toThrow(/not a symlink/);
+  });
+
+  test("refuses to clobber a real, non-generated file at the claude-sync bin destination", async () => {
+    await mkdir(sandboxPaths.localBinDir, { recursive: true });
+    await writeFile(join(sandboxPaths.localBinDir, "claude-sync"), "#!/bin/sh\necho not ours\n");
+    await expect(install(sandboxPaths)).rejects.toThrow(/not a file claude-sync manages/);
+  });
+
+  test("migrates a legacy symlink at the bin destination into a generated wrapper", async () => {
+    const { symlink } = await import("node:fs/promises");
+    await mkdir(sandboxPaths.localBinDir, { recursive: true });
+    await symlink(join(sandboxPaths.repoRoot, "bin", "claude-sync"), join(sandboxPaths.localBinDir, "claude-sync"));
+
+    await install(sandboxPaths);
+
+    const claudeSyncPath = join(sandboxPaths.localBinDir, "claude-sync");
+    const st = await lstat(claudeSyncPath);
+    expect(st.isSymbolicLink()).toBe(false);
+    expect(await readFile(claudeSyncPath, "utf8")).toContain(sandboxPaths.bunPath);
   });
 
   test("project-scoped install (via defaultInstallPaths project paths) writes into <cwd>/.claude, not the home dir", async () => {
@@ -129,6 +159,11 @@ describe("defaultInstallPaths", () => {
     expect(p.settingsPath).toBe(join(homedir(), ".claude", "settings.json"));
     expect(p.skillDestDir).toBe(join(homedir(), ".claude", "skills", "sync"));
   });
+
+  test("bunPath defaults to the currently running bun binary's absolute path", () => {
+    const p = defaultInstallPaths();
+    expect(p.bunPath).toBe(process.execPath);
+  });
 });
 
 describe("uninstall", () => {
@@ -160,5 +195,40 @@ describe("uninstall", () => {
 
   test("is a safe no-op when nothing was ever installed", async () => {
     await expect(uninstall(sandboxPaths)).resolves.toBeUndefined();
+  });
+
+  test("purge stops a running daemon (found via its pidfile) before deleting its data dir", async () => {
+    const { paths } = await import("../src/lib/paths");
+    await mkdir(paths.daemonDir(), { recursive: true });
+    const child = Bun.spawn({ cmd: ["sleep", "5"], stdout: "ignore", stderr: "ignore" });
+    await writeFile(paths.daemonPid(), String(child.pid));
+
+    await uninstall({ ...sandboxPaths, purge: true });
+
+    // Assert the process itself died (via signal 0), not just that its pidfile is gone —
+    // purge deletes the pidfile regardless, so checking daemonStatus() here would pass
+    // even if the daemon were never actually signaled.
+    let alive = true;
+    try {
+      process.kill(child.pid!, 0);
+    } catch {
+      alive = false;
+    }
+    expect(alive).toBe(false);
+    await child.exited; // let the test process reap it cleanly instead of leaking a zombie
+  });
+
+  test("a plain (non-purge) uninstall does not touch a running daemon", async () => {
+    const { paths } = await import("../src/lib/paths");
+    const { daemonStatus } = await import("../src/daemon/index");
+    await mkdir(paths.daemonDir(), { recursive: true });
+    const child = Bun.spawn({ cmd: ["sleep", "5"], stdout: "ignore", stderr: "ignore" });
+    await writeFile(paths.daemonPid(), String(child.pid));
+
+    await uninstall(sandboxPaths);
+
+    expect((await daemonStatus()).running).toBe(true);
+    child.kill();
+    await child.exited;
   });
 });
